@@ -50,6 +50,13 @@ open class LightboxController: UIViewController {
 
     return view
   }()
+  
+  lazy var downSwipeRecognizer: UIPanGestureRecognizer = {
+    let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleDownSwipe(_:)))
+    recognizer.minimumNumberOfTouches = 1
+    recognizer.delegate = self
+    return recognizer
+  }()
 
   // MARK: - Public views
 
@@ -148,6 +155,10 @@ open class LightboxController: UIViewController {
 
   fileprivate var initialImages: [LightboxImage]
   fileprivate let initialPage: Int
+  
+  private var downSwipeBegan = false
+  private var downSwipeForce: CGFloat = 0
+  private var downSwipeIgnore = false
 
   // MARK: - Initializers
 
@@ -176,6 +187,8 @@ open class LightboxController: UIViewController {
 
     [scrollView, overlayView, headerView, footerView].forEach { view.addSubview($0) }
     overlayView.addGestureRecognizer(overlayTapGestureRecognizer)
+    
+    scrollView.addGestureRecognizer(downSwipeRecognizer)
 
     configurePages(initialImages)
 
@@ -350,11 +363,57 @@ open class LightboxController: UIViewController {
     }
     return preloadIndicies
   }
+  
+  // MARK: - Gestures
+  
+  @objc func handleDownSwipe(_ sender: UIPanGestureRecognizer) {
+    #if !targetEnvironment(macCatalyst)
+    // Ignore on Mac
+        
+    let velocity = sender.velocity(in: view)
+      
+    if sender.state == .began {
+      if velocity.y < 0 {
+        return
+      }
+            
+      downSwipeBegan = true
+            
+      //print("Down Swipe Began")
+    } else if sender.state == .changed {
+      if downSwipeBegan == false || downSwipeIgnore == true {
+        return
+      } else if pageViews[currentPage].contentOffset.y > 0 {
+        // Make sure the scroll view is on the top before dismissing
+        downSwipeIgnore = true
+        return
+      }
+          
+      downSwipeForce += velocity.y
+            
+      if downSwipeForce > 7000 {
+        // Close
+        presented = false
+        dismissalDelegate?.lightboxControllerWillDismiss(self)
+        dismiss(animated: true, completion: nil)
+      }
+            
+      //print("Force: \(downSwipeForce)")
+    } else if sender.state == .cancelled || sender.state == .failed || sender.state == .ended {
+      downSwipeBegan = false
+      downSwipeIgnore = false
+      downSwipeForce = 0
+    }
+      
+    #endif
+  }
 }
 
 // MARK: - UIScrollViewDelegate
 
 extension LightboxController: UIScrollViewDelegate {
+  
+  
 
   public func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
     var speed: CGFloat = velocity.x < 0 ? -2 : 2
@@ -463,5 +522,22 @@ extension LightboxController: FooterViewDelegate {
       self.overlayView.alpha = expanded ? 1.0 : 0.0
       self.headerView.deleteButton.alpha = expanded ? 0.0 : 1.0
     })
+  }
+}
+
+// MARK: - FooterViewDelegate
+
+extension LightboxController: UIGestureRecognizerDelegate {
+  public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    
+    let velocity = (gestureRecognizer as! UIPanGestureRecognizer).velocity(in: view)
+    
+    if velocity.y < velocity.x {
+        // Ignore horizontal swipes
+        return false
+    }
+    
+    // Take over vertical swipes
+    return true
   }
 }
